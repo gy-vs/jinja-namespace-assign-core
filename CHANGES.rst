@@ -5,6 +5,9 @@ Version 3.1.5
 
 Unreleased
 
+-   The ``{% set %}`` tag allows namespace attributes such as ``ns.attr`` as
+    items of a tuple assignment target, so multiple namespace attributes can
+    be assigned at once, also mixed with regular names.
 -   The sandboxed environment handles indirect calls to ``str.format``, such as
     by passing a stored reference to a filter that calls its argument.
     :ghsa:`q2x7-8rv6-6q7h`

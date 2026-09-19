@@ -483,27 +483,29 @@ class Parser:
         by setting `with_tuple` to `False`.  If only assignments to names are
         wanted `name_only` can be set to `True`.  The `extra_end_rules`
         parameter is forwarded to the tuple parsing function.  If
-        `with_namespace` is enabled, a namespace assignment may be parsed.
+        `with_namespace` is enabled, namespace assignments such as
+        ``ns.attr`` may be parsed, also as items of a tuple target.
         """
         target: nodes.Expr
 
-        if with_namespace and self.stream.look().type == "dot":
+        if name_only:
+            token = self.stream.expect("name")
+            target = nodes.Name(token.value, "store", lineno=token.lineno)
+        elif with_tuple:
+            target = self.parse_tuple(
+                simplified=True,
+                extra_end_rules=extra_end_rules,
+                with_namespace=with_namespace,
+            )
+        elif with_namespace and self.stream.look().type == "dot":
             token = self.stream.expect("name")
             next(self.stream)  # dot
             attr = self.stream.expect("name")
             target = nodes.NSRef(token.value, attr.value, lineno=token.lineno)
-        elif name_only:
-            token = self.stream.expect("name")
-            target = nodes.Name(token.value, "store", lineno=token.lineno)
         else:
-            if with_tuple:
-                target = self.parse_tuple(
-                    simplified=True, extra_end_rules=extra_end_rules
-                )
-            else:
-                target = self.parse_primary()
+            target = self.parse_primary()
 
-            target.set_ctx("store")
+        target.set_ctx("store")
 
         if not target.can_assign():
             self.fail(
@@ -683,6 +685,7 @@ class Parser:
         with_condexpr: bool = True,
         extra_end_rules: t.Optional[t.Tuple[str, ...]] = None,
         explicit_parentheses: bool = False,
+        with_namespace: bool = False,
     ) -> t.Union[nodes.Tuple, nodes.Expr]:
         """Works like `parse_expression` but if multiple expressions are
         delimited by a comma a :class:`~jinja2.nodes.Tuple` node is created.
@@ -701,6 +704,10 @@ class Parser:
         `explicit_parentheses` is true if the parsing was triggered by an
         expression in parentheses.  This is used to figure out if an empty
         tuple is a valid expression or not.
+
+        If `with_namespace` is enabled, items of the tuple may be namespace
+        attribute assignments such as ``ns.attr``, also within nested
+        parentheses.  This is only useful for assignment targets.
         """
         lineno = self.stream.current.lineno
         if simplified:
@@ -711,6 +718,31 @@ class Parser:
 
             def parse() -> nodes.Expr:
                 return self.parse_expression(with_condexpr=False)
+
+        if with_namespace:
+            parse_item = parse
+
+            def parse_with_namespace() -> nodes.Expr:
+                if (
+                    self.stream.current.type == "name"
+                    and self.stream.look().type == "dot"
+                ):
+                    token = next(self.stream)
+                    next(self.stream)  # dot
+                    attr = self.stream.expect("name")
+                    return nodes.NSRef(token.value, attr.value, lineno=token.lineno)
+
+                if self.stream.current.type == "lparen":
+                    next(self.stream)
+                    node = self.parse_tuple(
+                        explicit_parentheses=True, with_namespace=True
+                    )
+                    self.stream.expect("rparen")
+                    return node
+
+                return parse_item()
+
+            parse = parse_with_namespace
 
         args: t.List[nodes.Expr] = []
         is_tuple = False

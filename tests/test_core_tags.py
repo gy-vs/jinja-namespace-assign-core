@@ -5,6 +5,7 @@ from jinja2 import Environment
 from jinja2 import TemplateRuntimeError
 from jinja2 import TemplateSyntaxError
 from jinja2 import UndefinedError
+from jinja2.sandbox import SandboxedEnvironment
 
 
 @pytest.fixture
@@ -537,6 +538,124 @@ class TestSet:
             "{{ ns.a }}|{{ ns.b }}"
         )
         assert tmpl.render() == "13|37"
+
+    def test_namespace_tuple(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace(a=1, b=2) %}"
+            "{% set ns.a, ns.b = 3, 4 %}"
+            "{{ ns.a }}-{{ ns.b }}"
+        )
+        assert tmpl.render() == "3-4"
+
+    def test_namespace_tuple_from_iterable(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace() %}"
+            "{% set ns.a, ns.b = [1, 2] %}"
+            "{{ ns.a }}-{{ ns.b }}"
+        )
+        assert tmpl.render() == "1-2"
+
+    def test_namespace_tuple_mixed(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace(b=0) %}"
+            "{% set a, ns.b = 1, 2 %}"
+            "{{ a }}-{{ ns.b }}"
+        )
+        assert tmpl.render() == "1-2"
+        assert tmpl.module.a == 1
+
+    def test_namespace_tuple_swap(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace(a=1, b=2) %}"
+            "{% set ns.a, ns.b = ns.b, ns.a %}"
+            "{{ ns.a }}-{{ ns.b }}"
+        )
+        assert tmpl.render() == "2-1"
+
+    def test_namespace_tuple_nested(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace() %}"
+            "{% set a, (ns.b, c) = 1, (2, 3) %}"
+            "{% set (ns.d, e), f = (4, 5), 6 %}"
+            "{{ a }}-{{ ns.b }}-{{ c }}-{{ ns.d }}-{{ e }}-{{ f }}"
+        )
+        assert tmpl.render() == "1-2-3-4-5-6"
+
+    def test_namespace_tuple_rhs_evaluated_once(self, env_trim):
+        calls = []
+
+        def f():
+            calls.append(1)
+            return 1, 2
+
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace() %}{% set ns.a, ns.b = f() %}{{ ns.a }}-{{ ns.b }}"
+        )
+        assert tmpl.render(f=f) == "1-2"
+        assert len(calls) == 1
+
+    def test_namespace_tuple_unpack_mismatch(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace() %}{% set ns.a, ns.b = 1, 2, 3 %}"
+        )
+        pytest.raises(ValueError, tmpl.render)
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace() %}{% set ns.a, ns.b = [1] %}"
+        )
+        pytest.raises(ValueError, tmpl.render)
+
+    def test_namespace_tuple_nested_unpack_mismatch(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace() %}{% set a, (ns.b, c) = 1, 2 %}"
+        )
+        pytest.raises(TypeError, tmpl.render)
+
+    def test_namespace_tuple_non_namespace(self, env_trim):
+        tmpl = env_trim.from_string("{% set ns.a, ns.b = 1, 2 %}")
+        exc_info = pytest.raises(TemplateRuntimeError, tmpl.render, ns=dict())
+        assert "non-namespace object" in exc_info.value.message
+
+    def test_namespace_tuple_mixed_non_namespace(self, env_trim):
+        tmpl = env_trim.from_string("{% set a, ns.b = 1, 2 %}")
+        exc_info = pytest.raises(TemplateRuntimeError, tmpl.render, ns=None)
+        assert "non-namespace object" in exc_info.value.message
+
+    def test_namespace_tuple_invalid(self, env_trim):
+        # subscript targets are not allowed
+        pytest.raises(
+            TemplateSyntaxError,
+            env_trim.from_string,
+            "{% set ns.a, foo['b'] = 1, 2 %}",
+        )
+        # only a single attribute level is allowed
+        pytest.raises(
+            TemplateSyntaxError,
+            env_trim.from_string,
+            "{% set ns.a, foo.bar.baz = 1, 2 %}",
+        )
+        # constants are not valid targets
+        pytest.raises(
+            TemplateSyntaxError, env_trim.from_string, "{% set ns.a, true = 1, 2 %}"
+        )
+
+    def test_namespace_tuple_loop(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace(total=0, last=-1) %}"
+            "{% for i in range(5) %}"
+            "{% set ns.total, ns.last = ns.total + i, i %}"
+            "{% endfor %}"
+            "{{ ns.total }}-{{ ns.last }}"
+        )
+        assert tmpl.render() == "10-4"
+
+    def test_namespace_tuple_sandbox(self):
+        env = SandboxedEnvironment()
+        tmpl = env.from_string(
+            "{% set ns = namespace(a=1, b=2) %}"
+            "{% set ns.a, ns.b = ns.b, ns.a %}"
+            "{{ ns.a }}-{{ ns.b }}"
+        )
+        assert tmpl.render() == "2-1"
 
     def test_block_escaping_filtered(self):
         env = Environment(autoescape=True)

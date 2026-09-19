@@ -1082,6 +1082,14 @@ Assignments use the `set` tag and can have multiple targets::
 
     .. versionadded:: 2.10 Added support for namespace objects
 
+    Namespace attributes can also be assigned as part of a tuple target,
+    mixed with regular names, in which case the value on the right is
+    unpacked like for any other tuple assignment::
+
+        {% set ns = namespace(found=false) %}
+        {% set ns.found, item = find_item() %}
+        {% set ns.a, ns.b = ns.b, ns.a %}  {# swap #}
+
 
 Block Assignments
 ~~~~~~~~~~~~~~~~~
