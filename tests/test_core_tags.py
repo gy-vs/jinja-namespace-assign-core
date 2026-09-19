@@ -505,6 +505,189 @@ class TestSet:
         )
         assert tmpl.render() == "42"
 
+    def test_namespace_tuple(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace() %}"
+            "{% set ns.a, ns.b = 1, 2 %}"
+            "{{ ns.a }}-{{ ns.b }}"
+        )
+        assert tmpl.render() == "1-2"
+
+    def test_namespace_tuple_parenthesized(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace() %}"
+            "{% set (ns.a, ns.b) = (1, 2) %}"
+            "{{ ns.a }}-{{ ns.b }}"
+        )
+        assert tmpl.render() == "1-2"
+
+    def test_namespace_tuple_single(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace() %}{% set (ns.a) = 1 %}{{ ns.a }}"
+        )
+        assert tmpl.render() == "1"
+
+    def test_namespace_tuple_mixed(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace() %}"
+            "{% set a, ns.b, c = 1, 2, 3 %}"
+            "{{ a }}-{{ ns.b }}-{{ c }}"
+        )
+        assert tmpl.render() == "1-2-3"
+
+    def test_namespace_tuple_nested(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace() %}"
+            "{% set ns.a, (b, ns.c), d = 1, (2, 3), 4 %}"
+            "{{ ns.a }}-{{ b }}-{{ ns.c }}-{{ d }}"
+        )
+        assert tmpl.render() == "1-2-3-4"
+
+    def test_namespace_tuple_deep_nested(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace() %}"
+            "{% set (ns.a, (ns.b, (c,))) = (1, (2, (3,))) %}"
+            "{{ ns.a }}-{{ ns.b }}-{{ c }}"
+        )
+        assert tmpl.render() == "1-2-3"
+
+    def test_namespace_tuple_swap(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace(a=1, b=2) %}"
+            "{% set ns.a, ns.b = ns.b, ns.a %}"
+            "{{ ns.a }}-{{ ns.b }}"
+        )
+        assert tmpl.render() == "2-1"
+
+    def test_namespace_tuple_swap_mixed(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace(a=1) %}{% set b = 2 %}"
+            "{% set b, ns.a = ns.a, b %}"
+            "{{ b }}-{{ ns.a }}"
+        )
+        assert tmpl.render() == "1-2"
+
+    def test_namespace_tuple_rhs_evaluated_once(self, env_trim):
+        calls = []
+
+        def spy(value):
+            calls.append(value)
+            return value
+
+        env_trim.filters["spy"] = spy
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace() %}"
+            "{% set ns.a, ns.b = (1, 2) | spy %}"
+            "{{ ns.a }}-{{ ns.b }}"
+        )
+        assert tmpl.render() == "1-2"
+        assert calls == [(1, 2)]
+
+    def test_namespace_tuple_too_few(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace() %}{% set ns.a, ns.b = (1,) %}"
+        )
+        with pytest.raises(ValueError, match="not enough values to unpack"):
+            tmpl.render()
+
+    def test_namespace_tuple_too_many(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace() %}{% set ns.a, ns.b = (1, 2, 3) %}"
+        )
+        with pytest.raises(ValueError, match="too many values to unpack"):
+            tmpl.render()
+
+    def test_namespace_tuple_nested_mismatch(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace() %}{% set ns.a, (b, ns.c) = 1, (2, 3, 4) %}"
+        )
+        with pytest.raises(ValueError, match="too many values to unpack"):
+            tmpl.render()
+
+    def test_namespace_tuple_non_iterable(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace() %}{% set ns.a, ns.b = 1 %}"
+        )
+        with pytest.raises(TypeError, match="cannot unpack non-iterable"):
+            tmpl.render()
+
+    def test_namespace_tuple_non_namespace(self, env_trim):
+        tmpl = env_trim.from_string("{% set foo.a, b = 1, 2 %}")
+        exc_info = pytest.raises(TemplateRuntimeError, tmpl.render, foo={})
+        assert "non-namespace object" in exc_info.value.message
+
+    def test_namespace_tuple_non_namespace_guarded_before_unpacking(self, env_trim):
+        # The namespace checks run before the unpacking, so a non-namespace
+        # target raises even when the right-hand side cannot be unpacked.
+        tmpl = env_trim.from_string("{% set foo.a, bar.b = 1 %}")
+        exc_info = pytest.raises(
+            TemplateRuntimeError, tmpl.render, foo={}, bar=object()
+        )
+        assert "non-namespace object" in exc_info.value.message
+
+    def test_namespace_tuple_guard_once(self, env_trim):
+        # The same namespace referenced by multiple targets is only checked
+        # once.
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace(a=1, b=2) %}"
+            "{% set ns.a, ns.b = 3, 4 %}"
+            "{{ ns.a }}-{{ ns.b }}"
+        )
+        assert tmpl.render() == "3-4"
+
+    def test_namespace_tuple_two_namespaces(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set a = namespace() %}{% set b = namespace() %}"
+            "{% set a.x, b.y = 1, 2 %}"
+            "{{ a.x }}-{{ b.y }}"
+        )
+        assert tmpl.render() == "1-2"
+
+    def test_namespace_tuple_in_loop(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace() %}"
+            "{% for x in range(3) %}"
+            "{% set ns.a, ns.b = x, x * 10 %}"
+            "{{ ns.a }}:{{ ns.b }};"
+            "{% endfor %}"
+            "{{ ns.a }}-{{ ns.b }}"
+        )
+        assert tmpl.render() == "0:0;1:10;2:20;2-20"
+
+    def test_namespace_tuple_in_loop_mixed(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace(total=0) %}"
+            "{% for x in items %}"
+            "{% set item, ns.total = x, ns.total + x %}"
+            "{{ item }}:{{ ns.total }};"
+            "{% endfor %}"
+        )
+        assert tmpl.render(items=[1, 2, 3]) == "1:1;2:3;3:6;"
+
+    def test_namespace_tuple_in_macro(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% macro m(ns) %}{% set ns.a, ns.b = 1, 2 %}"
+            "{{ ns.a }}-{{ ns.b }}{% endmacro %}"
+            "{{ m(namespace()) }}"
+        )
+        assert tmpl.render() == "1-2"
+
+    def test_namespace_tuple_for_loop_target_rejected(self, env_trim):
+        # Namespace attribute assignment is only valid in `set`, not as a
+        # `for` loop unpacking target.
+        pytest.raises(
+            TemplateSyntaxError,
+            env_trim.from_string,
+            "{% for ns.a in seq %}{% endfor %}",
+        )
+
+    def test_namespace_tuple_subscript_rejected(self, env_trim):
+        pytest.raises(
+            TemplateSyntaxError,
+            env_trim.from_string,
+            "{% set ns['a'], b = 1, 2 %}",
+        )
+
     def test_init_namespace(self, env_trim):
         tmpl = env_trim.from_string(
             "{% set ns = namespace(d, self=37) %}"

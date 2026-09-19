@@ -365,6 +365,12 @@ class CodeGenerator(NodeVisitor):
         # Tracks toplevel assignments
         self._assign_stack: t.List[t.Set[str]] = []
 
+        # True while the targets of a tuple assignment with namespace
+        # attribute targets are written.  In that case the namespace checks
+        # are emitted as separate statements before the assignment instead of
+        # inline.
+        self._nsref_guards_emitted = False
+
         # Tracks parameter definition blocks
         self._param_def_block: t.List[t.Set[str]] = []
 
@@ -1581,11 +1587,45 @@ class CodeGenerator(NodeVisitor):
 
     def visit_Assign(self, node: nodes.Assign, frame: Frame) -> None:
         self.push_assign_tracking()
-        self.newline(node)
-        self.visit(node.target, frame)
-        self.write(" = ")
-        self.visit(node.node, frame)
-        self.pop_assign_tracking(frame)
+        try:
+            self.newline(node)
+
+            ns_refs = self._get_nsrefs(node.target)
+
+            if ns_refs:
+                # Emit the namespace checks first and only once per referenced
+                # namespace.  The guards are statements and cannot be part of
+                # the assignment expression; emitting them before the
+                # right-hand side is evaluated also ensures the right-hand
+                # side is evaluated exactly once (after all guards pass).
+                for ns_name in dict.fromkeys(ns_ref.name for ns_ref in ns_refs):
+                    ref = frame.symbols.ref(ns_name)
+                    self.writeline(f"if not isinstance({ref}, Namespace):")
+                    self.indent()
+                    self.writeline(
+                        "raise TemplateRuntimeError"
+                        '("cannot assign attribute on non-namespace object")'
+                    )
+                    self.outdent()
+                # The assignment has to start on its own line, separate from
+                # the last guard statement.
+                self.newline(node)
+                self._nsref_guards_emitted = True
+
+            self.visit(node.target, frame)
+            self.write(" = ")
+            self.visit(node.node, frame)
+        finally:
+            self._nsref_guards_emitted = False
+            self.pop_assign_tracking(frame)
+
+    def _get_nsrefs(self, target: nodes.Expr) -> t.List[nodes.NSRef]:
+        """Return all namespace attribute references in an assignment target,
+        including the target itself if it is an ``NSRef``.
+        """
+        if isinstance(target, nodes.NSRef):
+            return [target]
+        return list(target.find_all(nodes.NSRef))
 
     def visit_AssignBlock(self, node: nodes.AssignBlock, frame: Frame) -> None:
         self.push_assign_tracking()
@@ -1641,14 +1681,19 @@ class CodeGenerator(NodeVisitor):
         # `foo.bar` notation they will be parsed as a normal attribute access
         # when used anywhere but in a `set` context
         ref = frame.symbols.ref(node.name)
-        self.writeline(f"if not isinstance({ref}, Namespace):")
-        self.indent()
-        self.writeline(
-            "raise TemplateRuntimeError"
-            '("cannot assign attribute on non-namespace object")'
-        )
-        self.outdent()
-        self.writeline(f"{ref}[{node.attr!r}]")
+        if not self._nsref_guards_emitted:
+            self.writeline(f"if not isinstance({ref}, Namespace):")
+            self.indent()
+            self.writeline(
+                "raise TemplateRuntimeError"
+                '("cannot assign attribute on non-namespace object")'
+            )
+            self.outdent()
+            self.writeline(f"{ref}[{node.attr!r}]")
+        else:
+            # Inside a tuple assignment the guards have already been emitted
+            # as statements; write only the assignment target here.
+            self.write(f"{ref}[{node.attr!r}]")
 
     def visit_Const(self, node: nodes.Const, frame: Frame) -> None:
         val = node.as_const(frame.eval_ctx)

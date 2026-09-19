@@ -1676,7 +1676,21 @@ The following functions are available in the global scope by default:
         {% endfor %}
         Found item having something: {{ ns.found }}
 
+    Multiple namespace attributes can be assigned at once using tuple
+    unpacking, which also allows swapping values::
+
+        {% set ns = namespace(a=1, b=2) %}
+        {% set ns.a, ns.b = ns.b, ns.a %}
+
+    Namespace attributes can be mixed with regular variables and nested
+    tuples in the same assignment.  As with Python, the right-hand side is
+    evaluated before the assignment and an error is raised if the number of
+    values does not match the number of targets.
+
     .. versionadded:: 2.10
+
+    .. versionchanged:: 3.1.5
+       Tuple unpacking assignment targets may reference namespace attributes.
 
 
 Extensions

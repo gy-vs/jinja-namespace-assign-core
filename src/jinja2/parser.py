@@ -483,26 +483,21 @@ class Parser:
         by setting `with_tuple` to `False`.  If only assignments to names are
         wanted `name_only` can be set to `True`.  The `extra_end_rules`
         parameter is forwarded to the tuple parsing function.  If
-        `with_namespace` is enabled, a namespace assignment may be parsed.
+        `with_namespace` is enabled, namespace attribute assignments may be
+        parsed, including inside tuple targets.
         """
-        target: nodes.Expr
-
-        if with_namespace and self.stream.look().type == "dot":
+        if name_only:
             token = self.stream.expect("name")
-            next(self.stream)  # dot
-            attr = self.stream.expect("name")
-            target = nodes.NSRef(token.value, attr.value, lineno=token.lineno)
-        elif name_only:
-            token = self.stream.expect("name")
-            target = nodes.Name(token.value, "store", lineno=token.lineno)
+            target: nodes.Expr = nodes.Name(token.value, "store", lineno=token.lineno)
+        elif with_tuple:
+            target = self.parse_tuple(
+                simplified=True,
+                extra_end_rules=extra_end_rules,
+                with_namespace=with_namespace,
+            )
+            target.set_ctx("store")
         else:
-            if with_tuple:
-                target = self.parse_tuple(
-                    simplified=True, extra_end_rules=extra_end_rules
-                )
-            else:
-                target = self.parse_primary()
-
+            target = self.parse_primary(with_namespace=with_namespace)
             target.set_ctx("store")
 
         if not target.can_assign():
@@ -643,7 +638,9 @@ class Parser:
             node = self.parse_filter_expr(node)
         return node
 
-    def parse_primary(self) -> nodes.Expr:
+    def parse_primary(
+        self, with_namespace: bool = False, simplified: bool = False
+    ) -> nodes.Expr:
         token = self.stream.current
         node: nodes.Expr
         if token.type == "name":
@@ -651,6 +648,15 @@ class Parser:
                 node = nodes.Const(token.value in ("true", "True"), lineno=token.lineno)
             elif token.value in ("none", "None"):
                 node = nodes.Const(None, lineno=token.lineno)
+            elif with_namespace and self.stream.look().type == "dot":
+                # namespace attribute assignment target (``foo.bar``); the
+                # three tokens are consumed here and an NSRef node is
+                # returned directly.
+                next(self.stream)  # name
+                next(self.stream)  # dot
+                attr = self.stream.expect("name")
+                node = nodes.NSRef(token.value, attr.value, lineno=token.lineno)
+                return node
             else:
                 node = nodes.Name(token.value, "load", lineno=token.lineno)
             next(self.stream)
@@ -667,7 +673,11 @@ class Parser:
             node = nodes.Const(token.value, lineno=token.lineno)
         elif token.type == "lparen":
             next(self.stream)
-            node = self.parse_tuple(explicit_parentheses=True)
+            node = self.parse_tuple(
+                explicit_parentheses=True,
+                simplified=simplified,
+                with_namespace=with_namespace,
+            )
             self.stream.expect("rparen")
         elif token.type == "lbracket":
             node = self.parse_list()
@@ -683,6 +693,7 @@ class Parser:
         with_condexpr: bool = True,
         extra_end_rules: t.Optional[t.Tuple[str, ...]] = None,
         explicit_parentheses: bool = False,
+        with_namespace: bool = False,
     ) -> t.Union[nodes.Tuple, nodes.Expr]:
         """Works like `parse_expression` but if multiple expressions are
         delimited by a comma a :class:`~jinja2.nodes.Tuple` node is created.
@@ -701,10 +712,19 @@ class Parser:
         `explicit_parentheses` is true if the parsing was triggered by an
         expression in parentheses.  This is used to figure out if an empty
         tuple is a valid expression or not.
+
+        If `with_namespace` is `True`, attribute assignments on namespace
+        objects (``namespace.attr``) are recognized as assignment targets
+        when parsing a simplified tuple.
         """
         lineno = self.stream.current.lineno
         if simplified:
-            parse = self.parse_primary
+
+            def parse() -> nodes.Expr:
+                return self.parse_primary(
+                    with_namespace=with_namespace, simplified=True
+                )
+
         elif with_condexpr:
             parse = self.parse_expression
         else:

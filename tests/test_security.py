@@ -75,6 +75,28 @@ class TestSandbox:
             "{% for foo, bar.baz in seq %}...{% endfor %}",
         )
 
+    def test_namespace_tuple_assignment(self):
+        env = SandboxedEnvironment()
+        tmpl = env.from_string(
+            "{% set ns = namespace(a=1, b=2) %}"
+            "{% set ns.a, ns.b = ns.b, ns.a %}"
+            "{{ ns.a }}-{{ ns.b }}"
+        )
+        assert tmpl.render() == "2-1"
+
+    def test_namespace_tuple_assignment_non_namespace(self):
+        env = SandboxedEnvironment()
+        tmpl = env.from_string("{% set foo.a, b = 1, 2 %}")
+        pytest.raises(TemplateRuntimeError, tmpl.render, foo=object())
+
+    def test_namespace_tuple_assignment_subscript_rejected(self):
+        env = SandboxedEnvironment()
+        pytest.raises(
+            TemplateSyntaxError,
+            env.from_string,
+            "{% set ns['a'], b = 1, 2 %}",
+        )
+
     def test_template_data(self, env):
         env = Environment(autoescape=True)
         t = env.from_string(

@@ -43,6 +43,12 @@ Unreleased
 -   ``urlize`` does not add ``mailto:`` to values like `@a@b`. :pr:`1870`
 -   Tests decorated with `@pass_context`` can be used with the ``|select``
     filter. :issue:`1624`
+-   Tuple unpacking in ``{% set %}`` may assign to namespace attributes, for
+    example ``{% set ns.a, ns.b = 1, 2 %}``, including nested tuples and mixes
+    of namespace attributes and regular variables. The right-hand side is
+    evaluated once, allowing values to be swapped with
+    ``{% set ns.a, ns.b = ns.b, ns.a %}``. Assigning to attributes of
+    non-namespace objects is still rejected at runtime.
 
 
 Version 3.1.4
